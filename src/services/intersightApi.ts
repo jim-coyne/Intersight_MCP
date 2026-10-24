@@ -130,7 +130,35 @@ export class IntersightApiService {
 
   // Core API methods
   async get(endpoint: string): Promise<any> {
-    return this.makeRequest('GET', endpoint);
+    const response = await this.makeRequest('GET', endpoint);
+
+    // Intersight caps results at 100. Auto-paginate list responses and fetch all
+    // remaining pages when returned an array at the pageSize limit, and if $top
+    // or $skip are not already set.
+    const results = response?.Results;
+    const callerControlsPaging = /\$top=|\$skip=/i.test(endpoint);
+    if (!Array.isArray(results) || results.length < 100 || callerControlsPaging) {
+      return response;
+    }
+
+    // set pageSize to Intersight's max
+    const pageSize = 100;
+    let skip = pageSize;
+    let allResults = [...results];
+    const sep = endpoint.includes('?') ? '&' : '?';
+
+    // Set a safety against runaway pagination
+    while (skip < 10000) {
+      const pagedEndpoint = `${endpoint}${sep}$top=${pageSize}&$skip=${skip}`;
+      const page = await this.makeRequest('GET', pagedEndpoint);
+      const pageResults = page?.Results || [];
+      allResults = allResults.concat(pageResults);
+      if (pageResults.length < pageSize) break;
+      skip += pageSize;
+    }
+
+    response.Results = allResults;
+    return response;
   }
 
   async post(endpoint: string, body: any): Promise<any> {
